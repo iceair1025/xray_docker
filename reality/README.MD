@@ -1,29 +1,26 @@
 ## xray_docker_reality
-xray reality docker 镜像
+
+XRay VLESS-Reality Docker 镜像，支持 tcp（vision）、xhttp、后置代理以及self-steal。
 
 [![xray_docker_reality_docker_image_build](https://github.com/wulabing/xray_docker/actions/workflows/xray_docker_reality.yml/badge.svg)](https://github.com/wulabing/xray_docker/actions/workflows/xray_docker_reality.yml)
 
-> 新的命令中添加了日志大小的限制，可以调整 max-size=100m 的数量来调整日志的最大大小，需要限制日志大小的用户请重新创建容器
+> 镜像每两天 UTC+8 04:00 自动构建。
 
-> 变更了镜像tag，不影响已经使用的用户
+## 懒人一键安装
 
-> 本 xray_docker_reality 仓库会每两天在 UTC+8 04:00 自动构建镜像
-
-## 懒人一键安装（docker已经准备好）
 ```
 EXTERNAL_PORT=2333 && docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p $EXTERNAL_PORT:443 -e EXTERNAL_PORT=$EXTERNAL_PORT wulabing/xray_docker_reality:latest && sleep 3 && docker exec -it xray_reality cat /config_info.txt
 ```
 
-## 基础使用方法
+## 快速开始
 
-如果你没有安装 docker 请先安装 docker
+未安装 Docker 时：
 
 ```
 curl -fsSL get.docker.com -o get-docker.sh && sh get-docker.sh
 ```
-### 端口映射模式
-如果你已经安装 docker，可以直接使用下面的命令，运行后会自动下载镜像并启动容器，
-EXTERNAL_PORT 为你想要使用的端口，如下所示，你将使用443端口
+
+**端口映射**（`EXTERNAL_PORT` 为宿主机对外端口）：
 
 ```
 docker pull wulabing/xray_docker_reality:latest
@@ -31,10 +28,7 @@ EXTERNAL_PORT=443
 docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p $EXTERNAL_PORT:443 -e EXTERNAL_PORT=$EXTERNAL_PORT wulabing/xray_docker_reality:latest
 ```
 
-### host 模式
-如果你想使用 host 模式，你可以使用以下命令，运行后会自动下载镜像并启动容器，
-HOSTMODE_PORT 为你想要使用的端口，如下所示，你将使用443端口
->请注意，如果你使用 host 模式，EXTERNAL_PORT 变量将不会生效，请使用 HOSTMODE_PORT 变量
+**host 模式**（使用 `HOSTMODE_PORT`，`EXTERNAL_PORT` 不生效）：
 
 ```
 docker pull wulabing/xray_docker_reality:latest
@@ -42,8 +36,7 @@ HOSTMODE_PORT=443
 docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 --network host -e HOSTMODE_PORT=$HOSTMODE_PORT wulabing/xray_docker_reality:latest
 ```
 
-## 持久化配置（推荐）
-使用宿主机目录保存 UUID/私钥/订阅信息，镜像更新后连接信息保持不变：
+**持久化配置（推荐）**：挂载 `./wulabing_xray_config:/data`，更新镜像后 UUID/密钥/订阅不变。旧版 `config_info.txt`、`xhttp_reality_state.json` 等文件名会自动兼容读取。
 
 ```
 docker pull wulabing/xray_docker_reality:latest
@@ -51,24 +44,56 @@ EXTERNAL_PORT=443
 docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p $EXTERNAL_PORT:443 -e EXTERNAL_PORT=$EXTERNAL_PORT -v "./wulabing_xray_config:/data" wulabing/xray_docker_reality:latest
 ```
 
-如果你之前保存过旧版的 config_info.txt，可放到 `./wulabing_xray_config/config_info.txt` 或 `./wulabing_xray_config/reality_config_info.txt`，启动时会自动兼容读取。
-
-
-查看日志获取配置信息，如下所示，按照提示配置客户端即可，
+## 获取配置信息
 
 ```
-docker logs -f xray_reality 
+docker logs -f xray_reality
 ```
 
-## 进阶使用方法
-如果你不想使用 443 端口，你可以自定义端口，例如使用 8443 端口，如下所示
+## 进阶配置
+
+**自定义 Reality 参数**（需自行保证参数正确；多个 `SERVERNAMES` 用空格分隔）：
 
 ```
-EXTERNAL_PORT=8443
-docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p $EXTERNAL_PORT:443 -e EXTERNAL_PORT=$EXTERNAL_PORT wulabing/xray_docker_reality:latest
+EXTERNAL_PORT=443
+docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p $EXTERNAL_PORT:443 -e EXTERNAL_PORT=$EXTERNAL_PORT -e UUID="XXX" -e SERVERNAMES="www.apple.com images.apple.com" -e DEST="www.apple.com:443" -e PRIVATEKEY="XXX" -v "./wulabing_xray_config:/data" wulabing/xray_docker_reality:latest
 ```
 
-如果你想启动多个 reality 服务，你可以使用不同的容器名，并注意端口不要冲突，如下所示你将启动两个 reality 服务，分别使用444和445端口
+**xhttp 模式**：`NETWORK=xhttp`（默认 `tcp` 为 vless-vision）。`XHTTP_PATH` 未设置时随机生成。
+
+```
+docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p 443:443 -e NETWORK=xhttp -v "./wulabing_xray_config:/data" wulabing/xray_docker_reality:latest
+```
+
+**shortId**：`SHORTIDS` 为空格分隔的 hex（偶数长度、≤16）。不设置时留空；仅非空时在订阅链接附加 `&sid=`。
+
+```
+docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p 443:443 -e SHORTIDS="6ba85179e30d4fc2" -v "./wulabing_xray_config:/data" wulabing/xray_docker_reality:latest
+```
+
+**后置代理**：`PROXY` 为 `socks5://` 或 `http://` URL（可含账密）。启用后除 `geoip:cn`、`geoip:private`、`bittorrent` 外，其余出站走上游代理。主要用于链式代理纯净家宽 IP，用于解锁 Netflix 流媒体及 AI 使用/付款场景
+
+```
+# socks5
+docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p 443:443 -e PROXY="socks5://user:pass@1.2.3.4:1080" wulabing/xray_docker_reality:latest
+
+# http
+docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p 443:443 -e PROXY="http://user:pass@10.0.0.1:8080" wulabing/xray_docker_reality:latest
+```
+
+**偷自己（self-steal）**：设置 `DOMAIN` 后内置 Caddy 为该域名签 Let's Encrypt 证书并托管站点，`DEST`/`SERVERNAMES` 由域名自动接管。需 DNS 指向本机，并映射 **80 与 443**；首次签发证书需等待数秒至数十秒。可与 `NETWORK=xhttp`、`SHORTIDS`、`PROXY` 组合使用。
+
+```
+docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p 443:443 -p 80:80 -e DOMAIN="your.domain.com" -v "./wulabing_xray_config:/data" wulabing/xray_docker_reality:latest
+```
+
+> **建议自定义伪装站点以提升隐蔽性**——挂载自己的静态站点目录到 `/srv/www` 即可覆盖默认页：
+
+```
+docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p 443:443 -p 80:80 -e DOMAIN="your.domain.com" -v "./my_site:/srv/www" -v "./wulabing_xray_config:/data" wulabing/xray_docker_reality:latest
+```
+
+**多实例**：不同 `--name` 与端口，避免冲突。
 
 ```
 EXTERNAL_PORT=444
@@ -78,40 +103,38 @@ EXTERNAL_PORT=445
 docker run -d --name xray_reality_2 --restart=always --log-opt max-size=100m --log-opt max-file=3 -p $EXTERNAL_PORT:443 -e EXTERNAL_PORT=$EXTERNAL_PORT wulabing/xray_docker_reality:latest
 ```
 
-如果你不想使用默认参数，你可以自定义参数，例如使用自定义的 UUID,以及自定义目标地址和服务器名称，如下所示，**支持的自定义参数请参考下方环境变量说明**
-
-存在多个 SERVERNAMES 时使用空格分开，例如：www.apple.com images.apple.com
-
-请注意，如果你使用自定义参数，你需要自己保证参数的正确性，否则可能会导致容器无法启动
-```
-EXTERNAL_PORT=443
-docker run -d --name xray_reality --restart=always --log-opt max-size=100m --log-opt max-file=3 -p $EXTERNAL_PORT:443 -e EXTERNAL_PORT=$EXTERNAL_PORT -e UUID="XXX" -e SERVERNAMES="www.apple.com images.apple.com" -e DEST="www.apple.com:443" -e PRIVATEKEY="XXX" wulabing/xray_docker_reality:latest
-```
-
-使用以下命令删除已经创建的容器，如下所示，需要将 xray_reality 替换为你自己的容器名 (--name 所设置的名称)
+**删除容器**：将 `xray_reality` 替换为实际容器名。
 
 ```
 docker rm -f xray_reality
 ```
 
-
 ## 环境变量
-你可以设置以下环境变量来自定义 XRay 的配置。
+
 * UUID：XRay 的唯一用户标识符。若未设置，脚本将自动生成一个随机 UUID。
-* DEST：目标地址。默认值为 www.apple.com:443。
-* SERVERNAMES：服务器名称列表。默认值为 www.apple.com images.apple.com。
+* DEST：目标地址。默认值为 www.apple.com:443。（偷自己模式下由 DOMAIN 自动接管）
+* SERVERNAMES：服务器名称列表（空格分隔）。默认值为 www.apple.com images.apple.com。（偷自己模式下由 DOMAIN 自动接管）
 * PRIVATEKEY：私钥。若未设置，脚本将自动生成一个新的私钥和对应的公钥。
-* NETWORK：网络类型。默认值为 tcp。
+* NETWORK：网络类型，`tcp`（vless-vision）或 `xhttp`。默认值为 tcp。
+* XHTTP_PATH：xhttp 模式的路径，仅 NETWORK=xhttp 生效。未设置时随机生成。
+* SHORTIDS：reality shortId（空格分隔可多个，hex/偶数长度/≤16）。默认留空。
+* PROXY：后置代理 URL，`socks5://[user:pass@]host:port` 或 `http://[user:pass@]host:port`。默认不启用。
+* DOMAIN：偷自己模式的自有域名，设置后自动启用内置 Caddy 自建站。默认不启用。
+* ACME_EMAIL：偷自己模式下 ACME 证书注册邮箱（可选）。
+* EXTERNAL_PORT：端口映射模式对外端口。默认 443。
+* HOSTMODE_PORT：host 模式端口。
 * CONFIG_DIR：持久化目录。默认值为 /data。
 
 ## 常量
-* flow：xtls-rprx-vision
+
+* flow：xtls-rprx-vision（tcp 模式）/ 留空（xhttp 模式）
 * security：reality
-* shortIds：留空
 
 ## 注意事项
+
 请确保在使用前已正确安装和配置 XRay 客户端。
 为了保证安全和稳定，请勿将 UUID、私钥等敏感信息泄露给他人。
+容器默认限制日志大小（`max-size=100m`、`max-file=3`），可按需调整。
 
 ## 捐赠
 

@@ -54,6 +54,7 @@
       }
     },
     {
+      "tag": "vless-in",
       "listen": "127.0.0.1",
       "port": 65432,
       "protocol": "vless",
@@ -67,7 +68,7 @@
         "decryption": "none"
       },
       "streamSettings": {
-        "network": "xx",
+        "network": "tcp",
         "security": "reality",
         "realitySettings": {
           "show": true,
@@ -156,4 +157,3 @@
     ]
   }
 }
-

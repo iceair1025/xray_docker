@@ -1,6 +1,8 @@
 #!/bin/sh
 CONFIG_DIR="${CONFIG_DIR:-/data}"
 STATE_FILE="$CONFIG_DIR/reality_state.json"
+# 兼容从 xhttp_reality 镜像迁移过来的用户（旧状态文件）
+LEGACY_STATE_FILE="$CONFIG_DIR/xhttp_reality_state.json"
 INFO_FILE="$CONFIG_DIR/reality_config_info.txt"
 
 mkdir -p "$CONFIG_DIR"
@@ -12,6 +14,8 @@ STATE_DEST=""
 STATE_SERVERNAMES=""
 STATE_NETWORK=""
 STATE_EXTERNAL_PORT=""
+STATE_XHTTP_PATH=""
+STATE_SHORTIDS=""
 
 LEGACY_INFO_FILE=""
 LEGACY_UUID=""
@@ -21,18 +25,23 @@ LEGACY_PRIVATEKEY=""
 LEGACY_PUBLICKEY=""
 LEGACY_NETWORK=""
 LEGACY_EXTERNAL_PORT=""
+LEGACY_XHTTP_PATH=""
 
 load_state() {
-  if [ ! -f "$STATE_FILE" ]; then
+  STATE_SRC="$STATE_FILE"
+  if [ ! -f "$STATE_SRC" ]; then
+    STATE_SRC="$LEGACY_STATE_FILE"
+  fi
+  if [ ! -f "$STATE_SRC" ]; then
     return
   fi
 
-  STATE_VALUES=$(jq -r '[.uuid // "", .private_key // "", .public_key // "", .dest // "", (.servernames // []) | join(" "), .network // "", .external_port // ""] | @tsv' "$STATE_FILE" 2>/dev/null)
+  STATE_VALUES=$(jq -r '[.uuid // "", .private_key // "", .public_key // "", .dest // "", (.servernames // []) | join(" "), .network // "", .external_port // "", .xhttp_path // "", (.shortids // []) | join(" ")] | @tsv' "$STATE_SRC" 2>/dev/null)
   if [ -z "$STATE_VALUES" ]; then
     return
   fi
 
-  IFS="$(printf '\t')" read -r STATE_UUID STATE_PRIVATEKEY STATE_PUBLICKEY STATE_DEST STATE_SERVERNAMES STATE_NETWORK STATE_EXTERNAL_PORT <<EOF_STATE
+  IFS="$(printf '\t')" read -r STATE_UUID STATE_PRIVATEKEY STATE_PUBLICKEY STATE_DEST STATE_SERVERNAMES STATE_NETWORK STATE_EXTERNAL_PORT STATE_XHTTP_PATH STATE_SHORTIDS <<EOF_STATE
 $STATE_VALUES
 EOF_STATE
 }
@@ -40,6 +49,8 @@ EOF_STATE
 load_legacy() {
   if [ -f "$INFO_FILE" ]; then
     LEGACY_INFO_FILE="$INFO_FILE"
+  elif [ -f "$CONFIG_DIR/xhttp_reality_config_info.txt" ]; then
+    LEGACY_INFO_FILE="$CONFIG_DIR/xhttp_reality_config_info.txt"
   elif [ -f "$CONFIG_DIR/config_info.txt" ]; then
     LEGACY_INFO_FILE="$CONFIG_DIR/config_info.txt"
   elif [ -f "/config_info.txt" ]; then
@@ -56,6 +67,7 @@ load_legacy() {
     LEGACY_PUBLICKEY=$(sed -n 's/^PUBLICKEY\/PASSWORD: //p' "$LEGACY_INFO_FILE")
     LEGACY_NETWORK=$(sed -n 's/^NETWORK: //p' "$LEGACY_INFO_FILE")
     LEGACY_EXTERNAL_PORT=$(sed -n 's/^PORT: //p' "$LEGACY_INFO_FILE")
+    LEGACY_XHTTP_PATH=$(sed -n 's/^XHTTP_PATH: //p' "$LEGACY_INFO_FILE")
   fi
 }
 
@@ -63,6 +75,37 @@ filter_masked() {
   case "$1" in
     *"*"*) echo "" ;;
     *) echo "$1" ;;
+  esac
+}
+
+# 解析 PROXY URL：socks5://user:pass@host:port 或 http://host:port
+# 解析结果写入 PROXY_PROTO / PROXY_HOST / PROXY_PORT / PROXY_USER / PROXY_PASS
+parse_proxy() {
+  raw="$1"
+  PROXY_SCHEME="${raw%%://*}"
+  rest="${raw#*://}"
+  case "$rest" in
+    *@*)
+      creds="${rest%@*}"
+      hostport="${rest##*@}"
+      PROXY_USER="${creds%%:*}"
+      case "$creds" in
+        *:*) PROXY_PASS="${creds#*:}" ;;
+        *) PROXY_PASS="" ;;
+      esac
+      ;;
+    *)
+      hostport="$rest"
+      PROXY_USER=""
+      PROXY_PASS=""
+      ;;
+  esac
+  PROXY_HOST="${hostport%%:*}"
+  PROXY_PORT="${hostport##*:}"
+  case "$PROXY_SCHEME" in
+    socks5|socks5h|socks) PROXY_PROTO="socks" ;;
+    http|https) PROXY_PROTO="http" ;;
+    *) PROXY_PROTO="" ;;
   esac
 }
 
@@ -106,6 +149,41 @@ else
     echo "Warning: Invalid UUID format from state/legacy, regenerate UUID"
     UUID="$(/xray uuid)"
     echo "UUID: $UUID"
+  fi
+fi
+
+# NETWORK：tcp（vision flow）或 xhttp，默认 tcp
+if [ -z "$NETWORK" ]; then
+  if [ -n "$STATE_NETWORK" ]; then
+    NETWORK="$STATE_NETWORK"
+  elif [ -n "$LEGACY_NETWORK" ]; then
+    NETWORK="$LEGACY_NETWORK"
+  fi
+fi
+
+if [ "$NETWORK" = "xhttp" ]; then
+  FLOW=""
+  echo "NETWORK: xhttp (flow disabled)"
+else
+  NETWORK="tcp"
+  FLOW="xtls-rprx-vision"
+  echo "NETWORK: tcp (flow xtls-rprx-vision)"
+fi
+
+# XHTTP_PATH：仅 xhttp 模式使用
+if [ "$NETWORK" = "xhttp" ]; then
+  if [ -z "$XHTTP_PATH" ]; then
+    if [ -n "$STATE_XHTTP_PATH" ]; then
+      XHTTP_PATH="$STATE_XHTTP_PATH"
+    elif [ -n "$LEGACY_XHTTP_PATH" ]; then
+      XHTTP_PATH="$LEGACY_XHTTP_PATH"
+    fi
+  fi
+  if [ -z "$XHTTP_PATH" ]; then
+    echo "XHTTP_PATH is not set, generate random XHTTP_PATH "
+    PATH_LENGTH="$(( RANDOM % 4 + 8 ))"
+    XHTTP_PATH="/""$(/xray uuid | tr -d '-' | cut -c 1-$PATH_LENGTH)"
+    echo "XHTTP_PATH: $XHTTP_PATH"
   fi
 fi
 
@@ -195,17 +273,40 @@ else
   fi
 fi
 
-if [ -z "$NETWORK" ]; then
-  if [ -n "$STATE_NETWORK" ]; then
-    NETWORK="$STATE_NETWORK"
-  elif [ -n "$LEGACY_NETWORK" ]; then
-    NETWORK="$LEGACY_NETWORK"
+# SHORTIDS 空格分隔多值，默认留空 [""] 维持现状
+if [ -z "$SHORTIDS" ]; then
+  if [ -n "$STATE_SHORTIDS" ]; then
+    SHORTIDS="$STATE_SHORTIDS"
   fi
 fi
 
-if [ -z "$NETWORK" ]; then
-  echo "NETWORK is not set,set default value tcp"
-  NETWORK="tcp"
+FIRST_SHORTID=""
+if [ -z "$SHORTIDS" ]; then
+  SHORTIDS_JSON_ARRAY='[""]'
+else
+  SHORTIDS_VALID=true
+  for sid in $SHORTIDS; do
+    if ! echo "$sid" | grep -qE '^[0-9a-fA-F]+$' || [ "$(( ${#sid} % 2 ))" -ne 0 ] || [ "${#sid}" -gt 16 ]; then
+      SHORTIDS_VALID=false
+    fi
+  done
+  if [ "$SHORTIDS_VALID" = false ]; then
+    echo "Warning: invalid SHORTIDS (expect hex, even length, <=16), fallback to empty"
+    SHORTIDS=""
+    SHORTIDS_JSON_ARRAY='[""]'
+  else
+    SHORTIDS_JSON_ARRAY="[$(echo $SHORTIDS | awk '{for(i=1;i<=NF;i++) printf "\"%s\",", $i}' | sed 's/,$//')]"
+    FIRST_SHORTID=$(echo $SHORTIDS | awk '{print $1}')
+  fi
+fi
+
+# 仅设置 DOMAIN 时启用本地 Caddy 站点，否则保持裸 reality
+USE_CADDY=false
+if [ -n "$DOMAIN" ]; then
+  USE_CADDY=true
+  DEST="127.0.0.1:8443"
+  SERVERNAMES="$DOMAIN"
+  echo "Steal-self mode enabled: serve local Caddy site for $DOMAIN, dest=$DEST"
 fi
 
 SERVERNAMES_JSON_ARRAY="$(echo "[$(echo $SERVERNAMES | awk '{for(i=1;i<=NF;i++) printf "\"%s\",", $i}' | sed 's/,$//')]")"
@@ -213,16 +314,62 @@ SERVERNAMES_JSON_ARRAY="$(echo "[$(echo $SERVERNAMES | awk '{for(i=1;i<=NF;i++) 
 jq \
   --arg uuid "$UUID" \
   --arg dest "$DEST" \
+  --arg flow "$FLOW" \
   --arg private_key "$PRIVATEKEY" \
   --arg network "$NETWORK" \
   --argjson serverNames "$SERVERNAMES_JSON_ARRAY" \
+  --argjson shortIds "$SHORTIDS_JSON_ARRAY" \
   '.inbounds[1].settings.clients[0].id = $uuid
+  | .inbounds[1].settings.clients[0].flow = $flow
   | .inbounds[1].streamSettings.realitySettings.dest = $dest
   | .inbounds[1].streamSettings.realitySettings.serverNames = $serverNames
+  | .inbounds[1].streamSettings.realitySettings.shortIds = $shortIds
   | .routing.rules[0].domain = $serverNames
   | .inbounds[1].streamSettings.realitySettings.privateKey = $private_key
   | .inbounds[1].streamSettings.network = $network' /config.json > /config.json_tmp && mv /config.json_tmp /config.json
 
+# xhttp 模式：注入 xhttpSettings
+if [ "$NETWORK" = "xhttp" ]; then
+  jq \
+    --arg xhttp_path "$XHTTP_PATH" \
+    '.inbounds[1].streamSettings.xhttpSettings = {
+      "headers": {},
+      "host": "",
+      "mode": "auto",
+      "noSSEHeader": false,
+      "path": $xhttp_path,
+      "scMaxBufferedPosts": 30,
+      "scMaxEachPostBytes": "1000000",
+      "scStreamUpServerSecs": "20-80",
+      "xPaddingBytes": "100-1000"
+    }' /config.json > /config.json_tmp && mv /config.json_tmp /config.json
+fi
+
+# PROXY（后置代理）：注入 socks/http 出站，并将全部出站流量改走代理（保留现有 blocked 规则）
+if [ -n "$PROXY" ]; then
+  parse_proxy "$PROXY"
+  if [ -z "$PROXY_PROTO" ] || [ -z "$PROXY_HOST" ] || [ -z "$PROXY_PORT" ]; then
+    echo "Warning: invalid PROXY format, expected socks5://[user:pass@]host:port or http://[user:pass@]host:port. Proxy disabled."
+  else
+    echo "Backend proxy enabled: $PROXY_PROTO://$PROXY_HOST:$PROXY_PORT (auth: $([ -n "$PROXY_USER" ] && echo yes || echo no))"
+    if [ -n "$PROXY_USER" ]; then
+      PROXY_OUTBOUND=$(jq -n \
+        --arg proto "$PROXY_PROTO" --arg addr "$PROXY_HOST" --argjson port "$PROXY_PORT" \
+        --arg user "$PROXY_USER" --arg pass "$PROXY_PASS" \
+        '{tag:"proxy", protocol:$proto, settings:{servers:[{address:$addr, port:$port, users:[{user:$user, pass:$pass}]}]}}')
+    else
+      PROXY_OUTBOUND=$(jq -n \
+        --arg proto "$PROXY_PROTO" --arg addr "$PROXY_HOST" --argjson port "$PROXY_PORT" \
+        '{tag:"proxy", protocol:$proto, settings:{servers:[{address:$addr, port:$port}]}}')
+    fi
+    jq --argjson proxyout "$PROXY_OUTBOUND" \
+      '.outbounds += [$proxyout]
+      | .routing.rules += [{"type":"field","outboundTag":"proxy","network":"tcp,udp"}]' \
+      /config.json > /config.json_tmp && mv /config.json_tmp /config.json
+  fi
+fi
+
+# 持久化状态
 jq -n \
   --arg uuid "$UUID" \
   --arg private_key "$PRIVATEKEY" \
@@ -230,8 +377,10 @@ jq -n \
   --arg dest "$DEST" \
   --arg network "$NETWORK" \
   --arg external_port "$EXTERNAL_PORT" \
+  --arg xhttp_path "$XHTTP_PATH" \
   --argjson servernames "$SERVERNAMES_JSON_ARRAY" \
-  '{uuid:$uuid, private_key:$private_key, public_key:$public_key, dest:$dest, servernames:$servernames, network:$network, external_port:$external_port}' > "$STATE_FILE"
+  --argjson shortids "$SHORTIDS_JSON_ARRAY" \
+  '{uuid:$uuid, private_key:$private_key, public_key:$public_key, dest:$dest, servernames:$servernames, network:$network, external_port:$external_port, xhttp_path:$xhttp_path, shortids:$shortids}' > "$STATE_FILE"
 
 FIRST_SERVERNAME=$(echo $SERVERNAMES | awk '{print $1}')
 
@@ -245,6 +394,12 @@ else
   DISPLAY_PUBLICKEY="$PUBLICKEY"
 fi
 
+# 订阅链接的 sid 参数：仅在 shortId 非空时附加，保持空值时与旧版完全一致
+SID_PARAM=""
+if [ -n "$FIRST_SHORTID" ]; then
+  SID_PARAM="&sid=$FIRST_SHORTID"
+fi
+
 # config info with green color
 echo -e "\033[32m" > /config_info.txt
 echo "IPV6: $IPV6" >> /config_info.txt
@@ -256,13 +411,33 @@ echo "SERVERNAMES: $SERVERNAMES (任选其一)" >> /config_info.txt
 echo "PRIVATEKEY: $DISPLAY_PRIVATEKEY" >> /config_info.txt
 echo "PUBLICKEY/PASSWORD: $DISPLAY_PUBLICKEY" >> /config_info.txt
 echo "NETWORK: $NETWORK" >> /config_info.txt
+if [ -n "$FIRST_SHORTID" ]; then
+  echo "SHORTID: $FIRST_SHORTID ($SHORTIDS 任选其一)" >> /config_info.txt
+fi
+if [ "$NETWORK" = "xhttp" ]; then
+  echo "XHTTP_PATH: $XHTTP_PATH" >> /config_info.txt
+fi
+if [ "$USE_CADDY" = true ]; then
+  echo "STEAL-SELF: enabled (Caddy local site for $DOMAIN)" >> /config_info.txt
+fi
+
+# 按 NETWORK 生成订阅链接
+build_sub() {
+  ip="$1"
+  if [ "$NETWORK" = "xhttp" ]; then
+    echo "vless://$UUID@$ip:$EXTERNAL_PORT?encryption=none&security=reality&type=xhttp&sni=$FIRST_SERVERNAME&fp=firefox&pbk=$PUBLICKEY${SID_PARAM}&path=$XHTTP_PATH&mode=auto#${ip}-wulabing_docker_xhttp_reality"
+  else
+    echo "vless://$UUID@$ip:$EXTERNAL_PORT?encryption=none&security=reality&type=tcp&sni=$FIRST_SERVERNAME&fp=firefox&pbk=$PUBLICKEY${SID_PARAM}&flow=xtls-rprx-vision#${ip}-wulabing_docker_vless_reality_vision"
+  fi
+}
+
 if [ "$IPV4" != "null" ]; then
-  SUB_IPV4="vless://$UUID@$IPV4:$EXTERNAL_PORT?encryption=none&security=reality&type=$NETWORK&sni=$FIRST_SERVERNAME&fp=firefox&pbk=$PUBLICKEY&flow=xtls-rprx-vision#${IPV4}-wulabing_docker_vless_reality_vision"
+  SUB_IPV4="$(build_sub "$IPV4")"
   echo "IPV4 订阅连接: $SUB_IPV4" >> /config_info.txt
   echo -e "IPV4 订阅二维码:\n$(echo "$SUB_IPV4" | qrencode -o - -t UTF8)" >> /config_info.txt
 fi
 if [ "$IPV6" != "null" ]; then
-  SUB_IPV6="vless://$UUID@$IPV6:$EXTERNAL_PORT?encryption=none&security=reality&type=$NETWORK&sni=$FIRST_SERVERNAME&fp=firefox&pbk=$PUBLICKEY&flow=xtls-rprx-vision#${IPV6}-wulabing_docker_vless_reality_vision"
+  SUB_IPV6="$(build_sub "$IPV6")"
   echo "IPV6 订阅连接: $SUB_IPV6" >> /config_info.txt
   echo -e "IPV6 订阅二维码:\n$(echo "$SUB_IPV6" | qrencode -o - -t UTF8)" >> /config_info.txt
 fi
@@ -273,6 +448,30 @@ cp -f /config_info.txt "$INFO_FILE"
 
 # show config info
 cat /config_info.txt
+
+# 偷自己模式：先启动 Caddy 并等待证书就绪，再启动 xray
+if [ "$USE_CADDY" = true ]; then
+  if [ -n "$ACME_EMAIL" ]; then
+    CADDY_EMAIL_LINE="email $ACME_EMAIL"
+  else
+    CADDY_EMAIL_LINE=""
+  fi
+  export DOMAIN ACME_EMAIL CADDY_EMAIL_LINE
+  echo "Starting Caddy for local site $DOMAIN ..."
+  caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
+  i=0
+  while [ $i -lt 30 ]; do
+    if curl -sk --connect-timeout 2 "https://127.0.0.1:8443" >/dev/null 2>&1; then
+      echo "Caddy local site is ready on 127.0.0.1:8443"
+      break
+    fi
+    i=$((i+1))
+    sleep 2
+  done
+  if [ $i -ge 30 ]; then
+    echo "Warning: Caddy site not confirmed ready within timeout; xray will keep retrying dest connection"
+  fi
+fi
 
 # run xray
 exec /xray -config /config.json

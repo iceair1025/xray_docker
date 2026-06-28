@@ -1,0 +1,20 @@
+{
+	{$CADDY_EMAIL_LINE}
+	auto_https disable_redirects
+	key_type p256
+}
+
+{$DOMAIN}:8443 {
+	tls {
+		issuer acme {
+			disable_tlsalpn_challenge
+		}
+	}
+
+	root * /srv/www
+	file_server
+	encode gzip zstd
+
+	# 减少服务端指纹
+	header Server "nginx"
+}

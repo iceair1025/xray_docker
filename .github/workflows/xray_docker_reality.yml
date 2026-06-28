@@ -10,6 +10,8 @@ on:
       - '.github/workflows/xray_docker_reality.yml'
       - 'reality/entrypoint.sh'
       - 'reality/config.json'
+      - 'reality/Caddyfile'
+      - 'reality/www/**'
       - 'reality/VERSION'
   pull_request:
     paths:
@@ -17,6 +19,8 @@ on:
       - '.github/workflows/xray_docker_reality.yml'
       - 'reality/entrypoint.sh'
       - 'reality/config.json'
+      - 'reality/Caddyfile'
+      - 'reality/www/**'
       - 'reality/VERSION'
 
 jobs:

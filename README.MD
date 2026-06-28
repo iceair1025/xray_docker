@@ -2,7 +2,8 @@
 xray reality docker 镜像
 
 [![xray_docker_reality_docker_image_build](https://github.com/wulabing/xray_docker/actions/workflows/xray_docker_reality.yml/badge.svg)](https://github.com/wulabing/xray_docker/actions/workflows/xray_docker_reality.yml)
-![xray_docker_xhttp_reality_docker_image_build](https://github.com/wulabing/xray_docker/actions/workflows/xray_docker_xhttp_reality.yml/badge.svg)
+
+> reality 自 0.1.0 起已整合 xhttp 模式（`NETWORK=xhttp`）
 
 ## 注意事项
 请确保在使用前已正确安装和配置 XRay 客户端。
@@ -15,8 +16,8 @@ xray reality docker 镜像
 
 ## 传送门
 
-- [xray_docker_reality](https://github.com/wulabing/xray_docker/tree/master/reality)
-- [xray_docker_xhttp_reality](https://github.com/wulabing/xray_docker/tree/master/xhttp_reality)
+- [xray_docker_reality](https://github.com/wulabing/xray_docker/tree/master/reality)（统一镜像，支持 tcp / xhttp）
+- [xray_docker_xhttp_reality](https://github.com/wulabing/xray_docker/tree/master/xhttp_reality)（已合并至 reality，仅保留迁移说明）
 
 ## 捐赠
 
