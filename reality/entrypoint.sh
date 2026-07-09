@@ -362,9 +362,12 @@ if [ -n "$PROXY" ]; then
         --arg proto "$PROXY_PROTO" --arg addr "$PROXY_HOST" --argjson port "$PROXY_PORT" \
         '{tag:"proxy", protocol:$proto, settings:{servers:[{address:$addr, port:$port}]}}')
     fi
+    # 幂等注入：容器 /config.json 在可写层持久化，重启会重复执行本脚本。
+    # 先剔除已存在的 proxy 出站与 proxy 路由，再各加唯一一份，避免重启后
+    # 出现重复 tag（xray 报 "existing tag found: proxy" 并崩溃重启循环）。
     jq --argjson proxyout "$PROXY_OUTBOUND" \
-      '.outbounds += [$proxyout]
-      | .routing.rules += [{"type":"field","outboundTag":"proxy","network":"tcp,udp"}]' \
+      '.outbounds = ((.outbounds | map(select(.tag != "proxy"))) + [$proxyout])
+      | .routing.rules = ((.routing.rules | map(select(.outboundTag != "proxy"))) + [{"type":"field","outboundTag":"proxy","network":"tcp,udp"}])' \
       /config.json > /config.json_tmp && mv /config.json_tmp /config.json
   fi
 fi
